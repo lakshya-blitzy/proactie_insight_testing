@@ -47,6 +47,30 @@ def test_role_grant_governs_later_requests():
     assert [p["id"] for p in after_revoke.json()] == [owner_project_id]
 
 
+def test_owner_lists_every_project_and_member_lists_only_its_own():
+    owner_project = client.post("/projects", json={"name": "Owner Scope"}, headers=OWNER)
+    assert owner_project.status_code == 200
+    assert owner_project.json()["owner_id"] == 1
+    owner_project_id = owner_project.json()["id"]
+
+    member_project = client.post("/projects", json={"name": "Member Scope"}, headers=MEMBER)
+    assert member_project.status_code == 200
+    assert member_project.json()["owner_id"] == 2
+    member_project_id = member_project.json()["id"]
+
+    # The two listings below bind both branches of the project-visibility filter in
+    # app/main.py:58 outside the expected-failure marker above: a filter that shows a
+    # member every project, or one that hides a teammate's project from an owner,
+    # fails this test.
+    member_listing = client.get("/projects", headers=MEMBER)
+    assert member_listing.status_code == 200
+    assert [p["id"] for p in member_listing.json()] == [member_project_id]
+
+    owner_listing = client.get("/projects", headers=OWNER)
+    assert owner_listing.status_code == 200
+    assert {p["id"] for p in owner_listing.json()} == {owner_project_id, member_project_id}
+
+
 def test_member_cannot_change_roles():
     response = client.post("/teams/1/role", params={"role": "member"}, headers=MEMBER)
     assert response.status_code == 403
