@@ -94,3 +94,37 @@ def test_task_title_below_minimum_is_rejected():
     assert [error["loc"] for error in errors] == [["body", "title"]]
     assert errors[0]["type"] == "string_too_short"
     assert errors[0]["ctx"]["min_length"] == 2
+
+
+def test_accepted_statuses_transition_through_the_allow_list():
+    created_project = client.post("/projects", json={"name": "Status Ladder"}, headers=OWNER)
+    assert created_project.status_code == 200
+    project_id = created_project.json()["id"]
+
+    created_task = client.post(
+        "/tasks", json={"title": "Walk the status ladder", "project_id": project_id}, headers=OWNER
+    )
+    assert created_task.status_code == 200
+    assert created_task.json()["status"] == "open"
+    assert created_task.json()["project_id"] == project_id
+    task_id = created_task.json()["id"]
+
+    # The allow-list accepts open, in_progress and done, so walk all three on one task:
+    # a narrowed allow-list must not leave the suite green.
+    moved = client.patch(f"/tasks/{task_id}", params={"status": "in_progress"}, headers=OWNER)
+    assert moved.status_code == 200
+    assert moved.json()["id"] == task_id
+    assert moved.json()["status"] == "in_progress"
+    assert moved.json()["project_id"] == project_id
+
+    reopened = client.patch(f"/tasks/{task_id}", params={"status": "open"}, headers=OWNER)
+    assert reopened.status_code == 200
+    assert reopened.json()["id"] == task_id
+    assert reopened.json()["status"] == "open"
+    assert reopened.json()["project_id"] == project_id
+
+    completed = client.patch(f"/tasks/{task_id}", params={"status": "done"}, headers=OWNER)
+    assert completed.status_code == 200
+    assert completed.json()["id"] == task_id
+    assert completed.json()["status"] == "done"
+    assert completed.json()["project_id"] == project_id
