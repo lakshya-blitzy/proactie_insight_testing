@@ -47,6 +47,16 @@ def test_role_grant_governs_later_requests():
     assert [p["id"] for p in after_revoke.json()] == [owner_project_id]
 
 
+# Binds change_role's success response outside the marker above, whose grant assertion
+# carries no signal: pytest reports an expected failure whatever the marked body observes.
+# The TEAM[user_id] = role write at app/main.py:93 is unobservable through the API (TEAM
+# is read only at app/main.py:91), leaving the response as the only bindable surface.
+def test_owner_grants_member_the_owner_role():
+    response = client.post("/teams/2/role", params={"role": "owner"}, headers=OWNER)
+    assert response.status_code == 200
+    assert response.json() == {"user_id": 2, "role": "owner"}
+
+
 def test_owner_lists_every_project_and_member_lists_only_its_own():
     owner_project = client.post("/projects", json={"name": "Owner Scope"}, headers=OWNER)
     assert owner_project.status_code == 200
