@@ -90,3 +90,7 @@ def test_task_title_below_minimum_is_rejected():
         "/tasks", json={"title": "x", "project_id": project_id}, headers=OWNER
     )
     assert created_task.status_code == 422
+    errors = created_task.json()["detail"]
+    assert [error["loc"] for error in errors] == [["body", "title"]]
+    assert errors[0]["type"] == "string_too_short"
+    assert errors[0]["ctx"]["min_length"] == 2
