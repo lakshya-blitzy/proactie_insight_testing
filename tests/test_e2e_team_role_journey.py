@@ -7,7 +7,14 @@ OWNER = {"Authorization": "Bearer owner-token"}
 MEMBER = {"Authorization": "Bearer member-token"}
 
 
-@pytest.mark.xfail(strict=True, reason="Role grants are written to TEAM but authorization reads USERS, so a promoted member keeps member rights (app/main.py:29, app/main.py:58, app/main.py:89-90 vs app/main.py:93)")
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Role grants are written to TEAM but authorization reads USERS, so a promoted "
+        "member keeps member rights (app/main.py:29, app/main.py:58, app/main.py:89-90 "
+        "vs app/main.py:93)"
+    ),
+)
 def test_role_grant_governs_later_requests():
     owner_project = client.post("/projects", json={"name": "Owner Scope"}, headers=OWNER)
     assert owner_project.status_code == 200
