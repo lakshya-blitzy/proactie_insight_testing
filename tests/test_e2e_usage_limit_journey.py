@@ -18,7 +18,7 @@ def test_usage_limit_is_enforced_across_requests():
     assert refused.status_code == 429
     assert refused.json()["detail"] == "Usage limit reached"
 
-    # The refusal body carries no "used" field, so the counter stays unknown over HTTP.
+    # The refusal body carries no "used" field, so this response does not reveal where the counter stands.
     # The second refusal shows only that the refusal path left it at or above the limit:
     # clearing or lowering it would let units=1 through with a 200. It cannot show
     # accumulation, since used=5 and used=6 both refuse units=1 with the same 429.
