@@ -124,10 +124,24 @@ def test_unknown_and_malformed_headers_are_rejected(monkeypatch):
     assert lower_case_scheme.status_code == 401
     assert lower_case_scheme.json() == {"detail": "Missing bearer token"}
 
-    # The HTTP transport may strip the trailing space, which decides whether this
-    # variant fails the prefix check or the lookup; only the rejection is contractual.
     empty_token = client.get("/projects", headers={"Authorization": "Bearer "})
     assert empty_token.status_code == 401
+    assert empty_token.json() == {"detail": "Invalid token"}
+
+    # The in-process transport delivers the header value to the guard unparsed, so
+    # these assertions cover the guard's own geometry; an HTTP/1.1 server strips
+    # the optional trailing whitespace before the application sees the header.
+    double_space = client.get(
+        "/projects", headers={"Authorization": "Bearer  owner-token"}
+    )
+    assert double_space.status_code == 401
+    assert double_space.json() == {"detail": "Invalid token"}
+
+    trailing_space = client.get(
+        "/projects", headers={"Authorization": "Bearer owner-token "}
+    )
+    assert trailing_space.status_code == 401
+    assert trailing_space.json() == {"detail": "Invalid token"}
 
     unknown = client.get("/projects", headers={"Authorization": "Bearer nope"})
     assert unknown.status_code == 401

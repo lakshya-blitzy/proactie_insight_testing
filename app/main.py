@@ -28,9 +28,12 @@ class TaskIn(BaseModel):
 
 
 def _issue_session(user: dict, token: str | None = None) -> str:
+    """Record a session in SESSIONS and return its credential."""
     if token is None:
         token = secrets.token_urlsafe(32)
     now = monotonic()
+    # USERS is only the seed directory of record, copied in by seed_sessions();
+    # validity is this record's expires_at, never membership in USERS.
     SESSIONS[token] = {"id": user["id"], "role": user["role"],
                        "issued_at": now, "expires_at": now + TOKEN_TTL_SECONDS}
     return token
