@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 from time import monotonic
+import secrets
 
 app = FastAPI(title="Proactive Insights Demo API", version="1.0.0")
 
@@ -11,6 +12,8 @@ TEAM = {1: "owner", 2: "member"}
 USAGE = {"used": 0, "limit": 5}
 NEXT_PROJECT = 1
 NEXT_TASK = 1
+TOKEN_TTL_SECONDS = 900
+SESSIONS: dict[str, dict] = {}
 
 
 class ProjectIn(BaseModel):
@@ -22,14 +25,40 @@ class TaskIn(BaseModel):
     project_id: int
 
 
-def current_user(authorization: str | None):
+def _issue_session(user: dict, token: str | None = None) -> str:
+    if token is None:
+        token = secrets.token_urlsafe(32)
+    now = monotonic()
+    SESSIONS[token] = {"id": user["id"], "role": user["role"],
+                       "issued_at": now, "expires_at": now + TOKEN_TTL_SECONDS}
+    return token
+
+
+def seed_sessions() -> None:
+    SESSIONS.clear()
+    for token, user in USERS.items():
+        _issue_session(user, token)
+
+
+def _resolve_session(authorization: str | None):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing bearer token")
     token = authorization.removeprefix("Bearer ")
-    user = USERS.get(token)
-    if not user:
+    session = SESSIONS.get(token)
+    if session is None:
         raise HTTPException(401, "Invalid token")
-    return user
+    if monotonic() >= session["expires_at"]:
+        del SESSIONS[token]
+        raise HTTPException(401, "Invalid token")
+    return token, session
+
+
+def current_user(authorization: str | None):
+    _, session = _resolve_session(authorization)
+    return {"id": session["id"], "role": session["role"]}
+
+
+seed_sessions()
 
 
 @app.get("/health")
@@ -108,3 +137,19 @@ def consume_usage(units: int = 1, authorization: str | None = Header(default=Non
 @app.get("/metrics")
 def metrics():
     return {"requests_total": 0, "uptime_seconds": round(monotonic(), 2)}
+
+
+@app.post("/sessions/rotate")
+def rotate_session(response: Response, authorization: str | None = Header(default=None)):
+    token, session = _resolve_session(authorization)
+    del SESSIONS[token]
+    new_token = _issue_session(session)
+    response.headers["Cache-Control"] = "no-store"
+    return {"token": new_token, "token_ttl_seconds": TOKEN_TTL_SECONDS}
+
+
+@app.post("/sessions/revoke")
+def revoke_session(authorization: str | None = Header(default=None)):
+    token, _ = _resolve_session(authorization)
+    del SESSIONS[token]
+    return {"revoked": True}
