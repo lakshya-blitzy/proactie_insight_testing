@@ -35,15 +35,48 @@ UNITS = 5
 
 # Two requests race for the five-unit ceiling, each asking for all of it.
 CONTENDERS = 2
-# The first read of the counter is held this long for the opposing request.  The
-# bounded wait is what keeps a handler that holds the counter for the whole
-# check-and-increment from blocking: the opposing request never reaches that
-# read, so the barrier breaks and the waiting thread continues.
+# Bound on one attempt at the first-read rendezvous, not on the rendezvous
+# itself.  A wait that times out here leaves the barrier broken, and the first
+# read then waits for the opposing request to record its own first read, so a
+# late request cannot slip past the schedule.
 BARRIER_TIMEOUT = 0.25
 # Delay applied to the nth second read of the counter, so whichever thread reads
 # second observes the value the other one has already stored.
 SECOND_READ_DELAYS = (0.0, 0.15)
 REQUEST_TIMEOUT = 30
+# Safety net on the second phase of the first-read rendezvous, which otherwise
+# ends on the fact that the handler already holds its guard.  A healthy run never
+# reaches it; it is what stops a request from hanging when the opposing one dies
+# before it ever reads the counter.
+PEER_ARRIVAL_TIMEOUT = 10
+
+
+def _handler_guard_held():
+    """Report whether the handler's own guard is held, without importing it.
+
+    The repaired handler holds ``USAGE_LOCK`` across the comparison, the
+    increment and the response snapshot, so a request sitting on its first read
+    of the counter is holding that guard, and every other request is provably
+    blocked before its own first read.  That is the only sound reason to stop
+    waiting for the opposing request: while the guard is held the peer cannot
+    arrive at this read at all.
+
+    A duration is not that reason.  How long the opposing request takes to reach
+    its first read depends on how loaded the host is, so no timeout tells a slow
+    peer apart from one that can never arrive, and a duration that gave up too
+    early would report the rendezvous as forced when it was not.  The wait
+    therefore ends on this test, with ``PEER_ARRIVAL_TIMEOUT`` kept only as a
+    safety net.
+
+    The guard is looked up on the module rather than imported, so a handler that
+    has none — the unsynchronised one this module exists to catch — reports "not
+    held" and the opposing request is always awaited.
+    """
+    guard = getattr(main_module, "USAGE_LOCK", None)
+    try:
+        return bool(guard is not None and guard.locked())
+    except (AttributeError, TypeError):
+        return False
 
 
 class _ScheduledUsage(dict):
@@ -51,11 +84,20 @@ class _ScheduledUsage(dict):
 
     The handler reads ``USAGE["used"]`` twice: once in the quota comparison and
     once in the increment.  This mapping tells those two reads apart per calling
-    thread and slows them down just enough to make the raced schedule
-    deterministic rather than machine-speed dependent:
+    thread and orders them so the raced schedule is forced on any host:
 
-    * the first read in a thread parks on a two-party barrier, so both requests
-      are approved against the same pre-increment value;
+    * the first read in a thread captures the value, records that the thread has
+      read the counter, and then parks on a two-party barrier, so both requests
+      are approved against the same pre-increment value however far apart they
+      arrive;
+    * a barrier that times out does not abandon that rendezvous: the first read
+      then waits for the opposing request to record its own first read, ending
+      that wait at once if the handler's guard is already held, because a guarded
+      handler cannot let the second request reach this read at all;
+    * a wait ended on that guard is checked at the second read: a second read
+      made with the guard no longer held shows it never spanned the section, so
+      the run records that the schedule was not forced and the test reports it
+      rather than passing on it;
     * the second read is staggered, so the thread that reads it later observes
       the value the other thread has already stored.
 
@@ -68,6 +110,10 @@ class _ScheduledUsage(dict):
         super().__init__(used=0, limit=LIMIT)
         self._reads = threading.local()
         self._barrier = threading.Barrier(CONTENDERS, timeout=BARRIER_TIMEOUT)
+        self._arrival_lock = threading.Lock()
+        self._arrivals = 0
+        self._peer_arrived = threading.Event()
+        self._unsound_bail = False
         self._second_read_lock = threading.Lock()
         self._second_reads = 0
 
@@ -79,14 +125,21 @@ class _ScheduledUsage(dict):
         self._reads.count = reads
         if reads == 1:
             captured = super().__getitem__(key)
+            self._record_arrival()
             try:
                 self._barrier.wait()
             except threading.BrokenBarrierError:
-                # The opposing request never reached this read, which is what
-                # happens once the handler holds the counter across both
-                # statements.  Continue with the value already captured.
-                pass
+                self._await_peer()
             return captured
+
+        if getattr(self._reads, "bailed_on_guard", False) and not _handler_guard_held():
+            # The guard that ended this thread's wait for the opposing request
+            # does not span this read either, so it never kept that request out
+            # of the section: the opposition was as free to arrive here as it is
+            # in the unguarded code this module exists to catch.  Record that
+            # nothing forced it rather than let the run pass as though the
+            # schedule had been shaped.
+            self._unsound_bail = True
 
         with self._second_read_lock:
             index = self._second_reads
@@ -94,6 +147,45 @@ class _ScheduledUsage(dict):
         if index < len(SECOND_READ_DELAYS):
             time.sleep(SECOND_READ_DELAYS[index])
         return super().__getitem__(key)
+
+    def _record_arrival(self):
+        """Note that this thread has read the counter, releasing any peer wait.
+
+        The value is captured before this runs, so a thread that reaches the
+        counter late still compares against the value the meter held before
+        either request wrote to it.
+        """
+        with self._arrival_lock:
+            self._arrivals += 1
+            if self._arrivals >= CONTENDERS:
+                self._peer_arrived.set()
+
+    def _await_peer(self):
+        """Finish the rendezvous a broken barrier could not, or give it up.
+
+        The wait ends on where the opposing request provably is rather than on
+        how long it has taken: once the handler's guard is held no request can
+        reach this read, so there is nothing left to wait for, and while it is
+        not held the peer is still on its way.  ``PEER_ARRIVAL_TIMEOUT`` is the
+        safety net behind that fact, not a schedule of its own.
+        """
+        if _handler_guard_held():
+            self._reads.bailed_on_guard = True
+            return
+        self._peer_arrived.wait(timeout=PEER_ARRIVAL_TIMEOUT)
+
+    def schedule_forced(self):
+        """Whether every wait abandoned on the handler's guard was justified.
+
+        A first read stops waiting for the opposing request when the handler's
+        guard is held, on the premise that the guard spans the second read as
+        well and so keeps that request out of the whole section.  A handler that
+        releases the guard between the two reads excludes nothing, which makes
+        the opposing request as free to arrive as it is in the unguarded code
+        this module exists to catch, and then the run proves nothing about the
+        section.
+        """
+        return not self._unsound_bail
 
     def used(self):
         """Current meter, read without engaging the schedule hook."""
@@ -128,13 +220,16 @@ def _burst(units, count):
     Every worker drives its own ``TestClient``: the handler is a synchronous
     ``def``, so FastAPI runs it in a worker thread of the client that issued the
     request, and separate clients put the requests genuinely in flight together.
+    Each client and its event-loop portal are built before the gate opens, so the
+    only work left between the gate and the handler is the request itself.
     """
     start = threading.Barrier(count)
 
     def issue():
-        start.wait(timeout=REQUEST_TIMEOUT)
-        response = TestClient(app).post(ENDPOINT, params={"units": units}, headers=OWNER)
-        return response.status_code
+        with TestClient(app) as client:
+            start.wait(timeout=REQUEST_TIMEOUT)
+            response = client.post(ENDPOINT, params={"units": units}, headers=OWNER)
+            return response.status_code
 
     with ThreadPoolExecutor(max_workers=count) as pool:
         futures = [pool.submit(issue) for _ in range(count)]
@@ -148,6 +243,10 @@ def test_concurrent_requests_cannot_drive_usage_above_limit(monkeypatch):
     writes are staggered.  Unless the comparison and the increment are
     indivisible, both are answered ``200`` and the meter lands at ten against a
     ceiling of five.
+
+    The run also asserts that the schedule was in fact forced, so a handler that
+    would let the opposing request reach the read unblocked cannot pass on a
+    schedule nothing shaped.
     """
     usage = _ScheduledUsage()
     monkeypatch.setattr(main_module, "USAGE", usage)
@@ -160,6 +259,11 @@ def test_concurrent_requests_cannot_drive_usage_above_limit(monkeypatch):
     assert accepted * UNITS <= LIMIT, observed
     assert usage.used() <= usage.limit(), observed
     assert usage.used() == accepted * UNITS, observed
+    assert usage.schedule_forced(), (
+        "the handler released its guard between the comparison and the increment, so the "
+        "opposing request was never excluded and the schedule was not forced",
+        observed,
+    )
 
 
 def test_usage_limit_is_not_exceeded_under_concurrent_requests():
