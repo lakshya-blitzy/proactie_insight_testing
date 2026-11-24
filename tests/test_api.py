@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from app.main import app, PROJECTS, TASKS, USAGE
+from app.main import app, PROJECTS, TASKS, USAGE, seed_sessions
 
 client = TestClient(app)
 OWNER = {"Authorization": "Bearer owner-token"}
@@ -9,6 +9,7 @@ def setup_function():
     PROJECTS.clear()
     TASKS.clear()
     USAGE["used"] = 0
+    seed_sessions()
 
 
 def test_health_endpoint():
