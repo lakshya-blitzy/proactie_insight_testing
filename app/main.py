@@ -28,7 +28,13 @@ class TaskIn(BaseModel):
 
 
 def _issue_session(user: dict, token: str | None = None) -> str:
-    """Record a session in SESSIONS and return its credential."""
+    """Record a session in SESSIONS and return its credential.
+
+    Mints the credential with secrets.token_urlsafe(32) when no token is
+    passed. The record holds the id and role copied from user, plus
+    issued_at and expires_at derived from one monotonic() reading and
+    TOKEN_TTL_SECONDS. The user argument must carry "id" and "role".
+    """
     if token is None:
         token = secrets.token_urlsafe(32)
     now = monotonic()
@@ -40,12 +46,23 @@ def _issue_session(user: dict, token: str | None = None) -> str:
 
 
 def seed_sessions() -> None:
+    """Clear SESSIONS and re-issue one session per USERS entry.
+
+    Runs once at import, and is the reset hook the test modules call.
+    """
     SESSIONS.clear()
     for token, user in USERS.items():
         _issue_session(user, token)
 
 
 def _resolve_session(authorization: str | None):
+    """Return the (token, session) pair for a presented header.
+
+    The session is the record carrying expires_at. Raises HTTP 401 when
+    the header is absent or lacks the "Bearer " prefix ("Missing bearer
+    token"), and for a credential with no record or one past its window
+    ("Invalid token"); an expired record is deleted before that raise.
+    """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing bearer token")
     token = authorization.removeprefix("Bearer ")
@@ -59,6 +76,7 @@ def _resolve_session(authorization: str | None):
 
 
 def current_user(authorization: str | None):
+    """Return a fresh {"id", "role"} dict for the caller's valid credential."""
     _, session = _resolve_session(authorization)
     return {"id": session["id"], "role": session["role"]}
 
@@ -155,7 +173,7 @@ def metrics():
 @app.post("/sessions/rotate")
 def rotate_session(response: Response, authorization: str | None = Header(default=None)):
     token, session = _resolve_session(authorization)
-    # the loser of a concurrent rotation must not mint a second replacement
+    # The loser of a concurrent rotation must not mint a second replacement.
     if SESSIONS.pop(token, None) is None:
         raise HTTPException(401, "Invalid token")
     new_token = _issue_session(session)
@@ -166,6 +184,7 @@ def rotate_session(response: Response, authorization: str | None = Header(defaul
 @app.post("/sessions/revoke")
 def revoke_session(authorization: str | None = Header(default=None)):
     token, _ = _resolve_session(authorization)
+    # The loser of a concurrent revoke or rotation must not report success.
     if SESSIONS.pop(token, None) is None:
         raise HTTPException(401, "Invalid token")
     return {"revoked": True}
