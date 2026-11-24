@@ -53,7 +53,7 @@ def _resolve_session(authorization: str | None):
     if session is None:
         raise HTTPException(401, "Invalid token")
     if monotonic() >= session["expires_at"]:
-        del SESSIONS[token]
+        SESSIONS.pop(token, None)
         raise HTTPException(401, "Invalid token")
     return token, session
 
@@ -155,7 +155,9 @@ def metrics():
 @app.post("/sessions/rotate")
 def rotate_session(response: Response, authorization: str | None = Header(default=None)):
     token, session = _resolve_session(authorization)
-    del SESSIONS[token]
+    # the loser of a concurrent rotation must not mint a second replacement
+    if SESSIONS.pop(token, None) is None:
+        raise HTTPException(401, "Invalid token")
     new_token = _issue_session(session)
     response.headers["Cache-Control"] = "no-store"
     return {"token": new_token, "token_ttl_seconds": TOKEN_TTL_SECONDS}
@@ -164,5 +166,6 @@ def rotate_session(response: Response, authorization: str | None = Header(defaul
 @app.post("/sessions/revoke")
 def revoke_session(authorization: str | None = Header(default=None)):
     token, _ = _resolve_session(authorization)
-    del SESSIONS[token]
+    if SESSIONS.pop(token, None) is None:
+        raise HTTPException(401, "Invalid token")
     return {"revoked": True}

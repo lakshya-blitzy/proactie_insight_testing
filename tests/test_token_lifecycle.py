@@ -71,6 +71,9 @@ def test_revoked_token_is_rejected():
     assert rejected.json() == {"detail": "Invalid token"}
     assert "owner-token" not in app_main.SESSIONS
 
+    # Termination is per-credential, so the other principal's session must survive.
+    assert client.get("/projects", headers=MEMBER).status_code == 200
+
 
 def test_rotation_issues_new_token_and_retires_old():
     rotated = client.post("/sessions/rotate", headers=OWNER)
@@ -81,6 +84,10 @@ def test_rotation_issues_new_token_and_retires_old():
     assert body["token"] != "owner-token"
     assert body["token"] in app_main.SESSIONS
 
+    # The route echoes the constant; the guard enforces the span it recorded.
+    issued = app_main.SESSIONS[body["token"]]
+    assert abs((issued["expires_at"] - issued["issued_at"]) - 900) < 1e-6
+
     assert client.get("/projects", headers=OWNER).status_code == 401
     replacement = {"Authorization": f"Bearer {body['token']}"}
     assert client.get("/projects", headers=replacement).status_code == 200
@@ -89,6 +96,22 @@ def test_rotation_issues_new_token_and_retires_old():
         "/teams/2/role", params={"role": "member"}, headers=replacement
     )
     assert reassigned.status_code == 200
+
+    # A replacement must carry the presented session's identity and role, not the
+    # owner's.
+    member_rotated = client.post("/sessions/rotate", headers=MEMBER)
+    assert member_rotated.status_code == 200
+    member_token = {"Authorization": f"Bearer {member_rotated.json()['token']}"}
+    member_forbidden = client.post(
+        "/teams/2/role", params={"role": "member"}, headers=member_token
+    )
+    assert member_forbidden.status_code == 403
+    assert member_forbidden.json() == {"detail": "Owner role required"}
+    member_project = client.post(
+        "/projects", json={"name": "Member Project"}, headers=member_token
+    )
+    assert member_project.status_code == 200
+    assert member_project.json()["owner_id"] == 2
 
 
 def test_unknown_and_malformed_headers_are_rejected(monkeypatch):
