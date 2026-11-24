@@ -1,21 +1,19 @@
-"""Regression tests for the atomicity of the metered-billing quota.
+"""Atomicity of the metered-billing quota.
 
 ``POST /billing/consume`` compares the requested units against the remaining
-quota and then adds them to the counter.  When those two statements each read
-the shared ``USAGE["used"]`` value independently, concurrent requests all pass
-the comparison against the same stale value and all increment, so billable
-usage is served beyond the configured ceiling (CWE-367, time-of-check to
-time-of-use).
-
-The endpoint now performs the comparison, the increment and the response
-snapshot as one indivisible step:
+quota and then adds them to the counter, reading the shared ``USAGE["used"]``
+value on both statements.  If the comparison and the increment read that value
+independently, concurrent requests pass the comparison against the same stale
+value and all increment, serving billable usage beyond the configured ceiling
+(CWE-367, time-of-check to time-of-use).  The endpoint performs the comparison,
+the increment and the response snapshot as one indivisible step:
 
 * ``test_concurrent_requests_cannot_drive_usage_above_limit`` forces the exact
-  interleaving that used to breach the ceiling and asserts the invariant.
+  interleaving that would breach the ceiling and asserts the invariant.
 * ``test_usage_limit_is_not_exceeded_under_concurrent_requests`` exercises the
   invariant under real request fan-out against the real counter.
 * ``test_rejection_contract_and_body_are_unchanged`` pins the status codes,
-  messages and body the repair must leave untouched.
+  messages and body the endpoint answers with.
 """
 
 import threading
@@ -287,7 +285,7 @@ def test_usage_limit_is_not_exceeded_under_concurrent_requests():
 
 
 def test_rejection_contract_and_body_are_unchanged():
-    """The endpoint's observable contract survives the repair unchanged.
+    """The status codes, messages and body the endpoint answers on each path.
 
     Authentication, the non-positive rejection, the over-limit rejection and the
     accepted body are pinned through the HTTP surface, with the meter asserted
