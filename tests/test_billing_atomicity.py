@@ -33,6 +33,11 @@ UNITS = 5
 
 # Two requests race for the five-unit ceiling, each asking for all of it.
 CONTENDERS = 2
+# Bound on the handler-entry rendezvous.  Both contenders are in flight before the
+# burst opens, so this bound is reached only by a request the host never schedules
+# at all; it keeps one request from waiting on a lost peer, it does not order their
+# arrival.
+ENTRY_TIMEOUT = 10
 # Bound on one attempt at the first-read rendezvous. The wait ends here when only
 # one request reaches the counter read, which is what a handler that serves that
 # read exclusively produces, so neither request can hang on the other.
@@ -52,7 +57,8 @@ class _ScheduledUsage(dict):
 
     * the first read in a thread captures the value and then parks on a two-party
       barrier, so both requests are approved against the same pre-increment value
-      however far apart they arrive;
+      however far apart they arrive, the difference in their dispatch having been
+      absorbed at the handler's entry;
     * a barrier wait ends at ``BARRIER_TIMEOUT`` when only one request can reach
       the read, so the waiting thread continues with the value it captured;
     * the second read is staggered, so the thread that reads it later observes
@@ -66,6 +72,8 @@ class _ScheduledUsage(dict):
     def __init__(self):
         super().__init__(used=0, limit=LIMIT)
         self._reads = threading.local()
+        self._capture_lock = threading.Lock()
+        self._captured = []
         self._barrier = threading.Barrier(CONTENDERS, timeout=BARRIER_TIMEOUT)
         self._second_read_lock = threading.Lock()
         self._second_reads = 0
@@ -78,6 +86,8 @@ class _ScheduledUsage(dict):
         self._reads.count = reads
         if reads == 1:
             captured = super().__getitem__(key)
+            with self._capture_lock:
+                self._captured.append(captured)
             try:
                 self._barrier.wait()
             except threading.BrokenBarrierError:
@@ -91,6 +101,11 @@ class _ScheduledUsage(dict):
             time.sleep(SECOND_READ_DELAYS[index])
         return super().__getitem__(key)
 
+    def captured(self):
+        """Values the contenders observed on their first read, in arrival order."""
+        with self._capture_lock:
+            return list(self._captured)
+
     def used(self):
         """Current meter, read without engaging the schedule hook."""
         return dict.__getitem__(self, "used")
@@ -98,6 +113,47 @@ class _ScheduledUsage(dict):
     def limit(self):
         """Configured ceiling, read without engaging the schedule hook."""
         return dict.__getitem__(self, "limit")
+
+
+class _HandlerEntry:
+    """Holds both contenders inside the handler before either reaches the counter.
+
+    The counter hook above forces the raced schedule only while both requests are
+    inside the handler together.  A request the host schedules late arrives after
+    the other one has written, reads the post-increment value and is rejected: the
+    answer a handler that keeps the comparison and the increment indivisible gives
+    as well, so the outcome alone says nothing about which handler ran.
+    Authentication is where that ambiguity goes away: it is the one call every
+    variant of the handler makes before it reads the counter, so parking there
+    turns a dispatch skew of any realistic length into work both requests finish
+    before either can reach the counter.  With the skew gone, the counter
+    rendezvous completes for a handler that compares and increments without
+    exclusion and stays broken for one that serialises them, unless the host
+    stalls a request inside the few statements between authentication and the
+    counter read.
+
+    ``overlapped`` reports whether both requests were inside the handler at the
+    same time.  It stays false only when a contender never arrived within
+    ``ENTRY_TIMEOUT``, and the drive test reports that rather than passing on a
+    schedule it never forced.
+    """
+
+    def __init__(self, monkeypatch):
+        self._entered = threading.Barrier(CONTENDERS, timeout=ENTRY_TIMEOUT)
+        self.overlapped = False
+        authenticate = main_module.current_user
+
+        def rendezvous(authorization):
+            user = authenticate(authorization)
+            try:
+                self._entered.wait()
+            except threading.BrokenBarrierError:
+                pass
+            else:
+                self.overlapped = True
+            return user
+
+        monkeypatch.setattr(main_module, "current_user", rendezvous)
 
 
 @pytest.fixture(autouse=True)
@@ -189,10 +245,14 @@ def _burst(units, count):
 def test_concurrent_requests_cannot_drive_usage_above_limit(monkeypatch):
     """Two full-ceiling requests may not both be served.
 
-    Both requests are made to read the same pre-increment value, and their
-    writes are staggered.  Unless the comparison and the increment are
-    indivisible, both are answered ``200`` and the meter lands at ten against a
-    ceiling of five.
+    Both requests are held at the handler's entry until the other arrives, so the
+    skew between their dispatches cannot decide the outcome.  Both then read the
+    same pre-increment value, and their writes are staggered.  Unless the
+    comparison and the increment are indivisible, both are answered ``200`` and
+    the meter lands at ten against a ceiling of five.  A contender that never
+    reaches the handler within ``ENTRY_TIMEOUT`` means the raced schedule was not
+    forced at all, which the test reports instead of passing on a run that could
+    not have told the two handlers apart.
 
     Exactly one request is served, because the first is approved against the
     fresh meter and the second then finds the ceiling reached, so a handler that
@@ -200,11 +260,18 @@ def test_concurrent_requests_cannot_drive_usage_above_limit(monkeypatch):
     """
     usage = _ScheduledUsage()
     monkeypatch.setattr(main_module, "USAGE", usage)
+    entry = _HandlerEntry(monkeypatch)
 
     statuses = _burst(UNITS, CONTENDERS)
 
     accepted = statuses.count(200)
     observed = (statuses, usage.used(), usage.limit())
+    assert entry.overlapped, (
+        f"the contenders never reached the handler together within {ENTRY_TIMEOUT}s, "
+        f"so the raced schedule was not forced and this run cannot tell an "
+        f"indivisible comparison-and-increment from a racy one: "
+        f"first reads {usage.captured()}, {observed}"
+    )
     assert set(statuses) <= {200, 429}, observed
     assert accepted * UNITS <= LIMIT, observed
     assert accepted == 1, observed
