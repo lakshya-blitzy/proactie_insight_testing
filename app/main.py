@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from time import monotonic
 import secrets
@@ -14,6 +14,8 @@ NEXT_PROJECT = 1
 NEXT_TASK = 1
 TOKEN_TTL_SECONDS = 900
 SESSIONS: dict[str, dict] = {}
+STARTED_AT = monotonic()
+REQUESTS_TOTAL = 0
 
 
 class ProjectIn(BaseModel):
@@ -59,6 +61,13 @@ def current_user(authorization: str | None):
 
 
 seed_sessions()
+
+
+@app.middleware("http")
+async def count_requests(request: Request, call_next):
+    global REQUESTS_TOTAL
+    REQUESTS_TOTAL += 1
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -136,7 +145,8 @@ def consume_usage(units: int = 1, authorization: str | None = Header(default=Non
 
 @app.get("/metrics")
 def metrics():
-    return {"requests_total": 0, "uptime_seconds": round(monotonic(), 2)}
+    return {"requests_total": REQUESTS_TOTAL,
+            "uptime_seconds": round(monotonic() - STARTED_AT, 2)}
 
 
 @app.post("/sessions/rotate")
