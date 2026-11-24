@@ -27,8 +27,9 @@ A token that has expired, been revoked or been rotated is rejected with `401 Inv
 
 ## Run tests
 ```bash
-pytest -q
+python -m pytest -q
 ```
+The `-m` form is required because `tests/` is not a package, so only `python -m pytest` puts the repository root on the import path; the bare `pytest -q` command fails with `ModuleNotFoundError: No module named 'app'`.
 
 ## Suggested scan setup
 - Scan the repository root.
