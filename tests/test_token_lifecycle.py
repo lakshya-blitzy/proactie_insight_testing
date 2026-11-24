@@ -12,6 +12,10 @@ def setup_function():
     PROJECTS.clear()
     TASKS.clear()
     USAGE["used"] = 0
+    app_main.TEAM.clear()
+    app_main.TEAM.update({1: "owner", 2: "member"})
+    app_main.NEXT_PROJECT = 1
+    app_main.NEXT_TASK = 1
     seed_sessions()
 
 
@@ -43,37 +47,19 @@ def test_expired_token_stops_working_on_every_guarded_route(monkeypatch):
 
     # Rejecting an expired credential also deletes its record, so restore it before
     # every call: each route must face a session that is present but past its window.
-    app_main.SESSIONS["owner-token"] = record
-    created = client.post("/projects", json={"name": "Expired Write"}, headers=OWNER)
-    assert created.status_code == 401
-    assert created.json() == {"detail": "Invalid token"}
-    assert "owner-token" not in app_main.SESSIONS
-
-    app_main.SESSIONS["owner-token"] = record
-    task = client.post(
-        "/tasks", json={"title": "Expired Task", "project_id": 1}, headers=OWNER
-    )
-    assert task.status_code == 401
-    assert task.json() == {"detail": "Invalid token"}
-    assert "owner-token" not in app_main.SESSIONS
-
-    app_main.SESSIONS["owner-token"] = record
-    patched = client.patch("/tasks/1", params={"status": "done"}, headers=OWNER)
-    assert patched.status_code == 401
-    assert patched.json() == {"detail": "Invalid token"}
-    assert "owner-token" not in app_main.SESSIONS
-
-    app_main.SESSIONS["owner-token"] = record
-    reassigned = client.post("/teams/1/role", params={"role": "member"}, headers=OWNER)
-    assert reassigned.status_code == 401
-    assert reassigned.json() == {"detail": "Invalid token"}
-    assert "owner-token" not in app_main.SESSIONS
-
-    app_main.SESSIONS["owner-token"] = record
-    billing = client.post("/billing/consume", params={"units": 1}, headers=OWNER)
-    assert billing.status_code == 401
-    assert billing.json() == {"detail": "Invalid token"}
-    assert "owner-token" not in app_main.SESSIONS
+    guarded_routes = [
+        ("post", "/projects", {"json": {"name": "Expired Write"}}),
+        ("post", "/tasks", {"json": {"title": "Expired Task", "project_id": 1}}),
+        ("patch", "/tasks/1", {"params": {"status": "done"}}),
+        ("post", "/teams/1/role", {"params": {"role": "member"}}),
+        ("post", "/billing/consume", {"params": {"units": 1}}),
+    ]
+    for method, url, kwargs in guarded_routes:
+        app_main.SESSIONS["owner-token"] = record
+        rejected = getattr(client, method)(url, headers=OWNER, **kwargs)
+        assert rejected.status_code == 401
+        assert rejected.json() == {"detail": "Invalid token"}
+        assert "owner-token" not in app_main.SESSIONS
 
 
 def test_revoked_token_is_rejected():
@@ -106,23 +92,16 @@ def test_rotation_issues_new_token_and_retires_old():
 
 
 def test_unknown_and_malformed_headers_are_rejected(monkeypatch):
-    absent = client.get("/projects")
-    assert absent.status_code == 401
-    assert absent.json() == {"detail": "Missing bearer token"}
-
-    schemeless = client.get("/projects", headers={"Authorization": "Bearer"})
-    assert schemeless.status_code == 401
-    assert schemeless.json() == {"detail": "Missing bearer token"}
-
-    other_scheme = client.get("/projects", headers={"Authorization": "Basic abc"})
-    assert other_scheme.status_code == 401
-    assert other_scheme.json() == {"detail": "Missing bearer token"}
-
-    lower_case_scheme = client.get(
-        "/projects", headers={"Authorization": "bearer owner-token"}
-    )
-    assert lower_case_scheme.status_code == 401
-    assert lower_case_scheme.json() == {"detail": "Missing bearer token"}
+    malformed = [
+        None,
+        {"Authorization": "Bearer"},
+        {"Authorization": "Basic abc"},
+        {"Authorization": "bearer owner-token"},
+    ]
+    for headers in malformed:
+        rejected = client.get("/projects", headers=headers)
+        assert rejected.status_code == 401
+        assert rejected.json() == {"detail": "Missing bearer token"}
 
     empty_token = client.get("/projects", headers={"Authorization": "Bearer "})
     assert empty_token.status_code == 401
