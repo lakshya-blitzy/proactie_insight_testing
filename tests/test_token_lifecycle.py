@@ -28,6 +28,9 @@ def test_owner_token_authenticates_within_lifetime():
 
 def test_token_is_accepted_immediately_before_expiry(monkeypatch):
     expires_at = app_main.SESSIONS["owner-token"]["expires_at"]
+    # The guard rejects at monotonic() >= expires_at, so the last instant it accepts
+    # is strictly before expiry: one epsilon below. The boundary instant itself is
+    # covered by test_token_is_rejected_at_expiry_instant.
     monkeypatch.setattr(app_main, "monotonic", lambda: expires_at - 1e-6)
     assert client.get("/projects", headers=OWNER).status_code == 200
 
@@ -126,13 +129,15 @@ def test_unknown_and_malformed_headers_are_rejected(monkeypatch):
         assert rejected.status_code == 401
         assert rejected.json() == {"detail": "Missing bearer token"}
 
+    # The in-process transport delivers the header value to the guard unparsed, so
+    # the empty-token and whitespace assertions below cover the guard's own
+    # geometry; an HTTP/1.1 server strips the optional trailing whitespace before
+    # the application sees the header, which would reject "Bearer " as a missing
+    # prefix rather than an invalid token.
     empty_token = client.get("/projects", headers={"Authorization": "Bearer "})
     assert empty_token.status_code == 401
     assert empty_token.json() == {"detail": "Invalid token"}
 
-    # The in-process transport delivers the header value to the guard unparsed, so
-    # these assertions cover the guard's own geometry; an HTTP/1.1 server strips
-    # the optional trailing whitespace before the application sees the header.
     double_space = client.get(
         "/projects", headers={"Authorization": "Bearer  owner-token"}
     )
