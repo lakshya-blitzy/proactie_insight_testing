@@ -220,6 +220,22 @@ def _burst(units, count):
     request, and separate clients put the requests genuinely in flight together.
     Each client and its event-loop portal are built before the gate opens, so the
     only work left between the gate and the handler is the request itself.
+
+    Both the wait for the results and the teardown that follows it are bounded, so
+    a handler that stops making progress fails the run here instead of parking the
+    suite.  The wait on each future is bounded by ``REQUEST_TIMEOUT``; the request
+    itself is bounded by nothing, because httpx sets no timeout over the in-process
+    ASGI transport, so a handler that deadlocks inside its guarded section keeps
+    its worker inside ``client.post``.  Joining that worker would wait for it
+    forever, which is why a wait that runs out describes the state it was taken
+    in: which requests were still running, which had not started, whether the
+    handler's guard is held, and the counter as it stood.  It then abandons the
+    pool with its outstanding futures cancelled rather than joined.
+
+    One deadlock is still left to the harness: a worker abandoned that way is a
+    non-daemon thread, so CPython's interpreter-exit handler joins it once every
+    test has finished.  This helper turns a deadlocked handler into a reported
+    failure with that state named; it cannot make the deadlocked thread terminate.
     """
     start = threading.Barrier(count)
 
@@ -229,9 +245,40 @@ def _burst(units, count):
             response = client.post(ENDPOINT, params={"units": units}, headers=OWNER)
             return response.status_code
 
-    with ThreadPoolExecutor(max_workers=count) as pool:
+    pool = ThreadPoolExecutor(max_workers=count)
+    collected = False
+    try:
         futures = [pool.submit(issue) for _ in range(count)]
-        return [future.result(timeout=REQUEST_TIMEOUT) for future in futures]
+        statuses = [future.result(timeout=REQUEST_TIMEOUT) for future in futures]
+        collected = True
+        return statuses
+    except TimeoutError as exc:
+        if any(future.done() and future.exception() is exc for future in futures):
+            # A worker that raised ``TimeoutError`` itself is re-raised unchanged;
+            # only a wait that ran out leaves its future unfinished, and that is
+            # the state described below.
+            raise
+        running = [index for index, future in enumerate(futures) if future.running()]
+        pending = [
+            index
+            for index, future in enumerate(futures)
+            if not future.done() and not future.running()
+        ]
+        meter = getattr(main_module, "USAGE", None)
+        snapshot = dict(meter) if isinstance(meter, dict) else meter
+        raise AssertionError(
+            f"a burst of {count} request(s) for {units} unit(s) did not return "
+            f"within {REQUEST_TIMEOUT}s and the handler is not making progress: "
+            f"{len(running)} worker(s) still running at {running}, "
+            f"{len(pending)} not yet started at {pending}, the handler's guard "
+            f"(USAGE_LOCK) held at the timeout: {_handler_guard_held()}, "
+            f"the counter reads {snapshot}"
+        ) from None
+    finally:
+        # A pool whose results are all in is joined exactly as its context manager
+        # would join it; a pool that has been given up on is cancelled and left,
+        # so a worker parked in a deadlocked handler cannot hold the run here.
+        pool.shutdown(wait=collected, cancel_futures=not collected)
 
 
 def test_concurrent_requests_cannot_drive_usage_above_limit(monkeypatch):
