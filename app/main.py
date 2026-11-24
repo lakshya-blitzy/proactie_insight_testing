@@ -101,10 +101,17 @@ def consume_usage(units: int = 1, authorization: str | None = Header(default=Non
     current_user(authorization)
     if units < 1:
         raise HTTPException(422, "Units must be positive")
+    # The guard spans the quota comparison and the counter increment because both read
+    # USAGE["used"]: only under one lock does the increment apply the value the comparison
+    # approved, so USAGE["used"] never exceeds USAGE["limit"], a request rejected with 429
+    # writes nothing, and each locked snapshot approves and applies one request's units.
     with USAGE_LOCK:
         if USAGE["used"] + units > USAGE["limit"]:
             raise HTTPException(429, "Usage limit reached")
         USAGE["used"] += units
+        # Copy inside the guard and return this copy, never USAGE itself: the body must
+        # carry this request's own post-increment state, and the live dict would let a
+        # later writer's increment leak into this caller's response.
         consumed = dict(USAGE)
     return consumed
 
