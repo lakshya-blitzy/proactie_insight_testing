@@ -2,7 +2,7 @@
 
 ## 1.1 Project Overview
 
-The Proactive Insights Demo API is a compact FastAPI service — projects, tasks, role administration, a simulated billing quota and two operational probes — behind bearer-token identity and entirely in process memory. It is a fixture for evaluating repository tooling, and its suite covered three happy paths and 60% of `app/main.py`'s statements. This project delivered the end-to-end suite: twenty-one test nodes across seven modules, one shared isolation fixture, and a coverage gate that fails any run below 90%. A maintainer can now rely on a deterministic suite that pins the API's response contracts, its refusal behaviour, and one documented defect it must not silently change.
+The Proactive Insights Demo API is a compact FastAPI service — projects, tasks, role administration, a simulated billing quota and two operational probes — behind bearer-token identity and entirely in process memory. It is a fixture for evaluating repository tooling, and its suite covered three happy paths and 60% of `app/main.py`'s statements. This project delivered the end-to-end suite: nineteen test nodes across five modules, one shared isolation fixture, and a coverage gate that fails any run below 90%. A maintainer can now rely on a deterministic suite that pins the API's response contracts, its refusal behaviour, and one documented defect it must not silently change.
 
 ## 1.2 Completion Status
 
@@ -26,7 +26,7 @@ All 21 requirements in scope are complete: the four end-to-end modules, the isol
 
 ## 1.3 Key Accomplishments
 
-- Twenty-one test nodes run green in about 0.6 s: `19 passed, 2 xfailed`.
+- Nineteen test nodes run green in 0.30 s: `18 passed, 1 xfailed`.
 - `app/main.py` statement coverage is 100.00% (81 statements, 0 missed) against a 90% floor.
 - The documented `pytest -q` measures that coverage and enforces the floor.
 - All nine handlers execute, and all nine refusals assert status **and** `detail`.
@@ -51,7 +51,7 @@ All 21 requirements in scope are complete: the four end-to-end modules, the isol
 
 ## 1.5 Access Issues
 
-No access issues identified. The suite needs no database, broker, cache, container, secret or environment variable: nineteen of its 21 nodes drive the ASGI application in process, and the two `e2e`-marked journeys start the pinned uvicorn as a child of the test session on a kernel-assigned loopback port, which needs no configuration either.
+No access issues identified. The suite needs no database, broker, cache, container, secret or environment variable: it drives the ASGI application in process.
 
 ## 1.6 Recommended Next Steps
 
@@ -94,7 +94,7 @@ The seven application defects listed in Section 1.4 are deliberately outside thi
 
 # 3. Test Results
 
-Every figure below was produced by running the suite in this checkout with CPython 3.12.3, pytest 8.3.5, httpx 0.28.1, fastapi 0.115.12, pytest-cov 7.1.0 and coverage 7.17.3; the totals and the two end-to-end rows were re-derived on CPython 3.13.18 with the same six pins. The gated run is `.venv/bin/python -m pytest -q` from the repository root.
+Every figure below was produced by running the suite in this checkout with CPython 3.12.3, pytest 8.3.5, httpx 0.28.1, fastapi 0.115.12, pytest-cov 7.1.0 and coverage 7.17.3. The gated run is `.venv/bin/python -m pytest -q` from the repository root.
 
 | Area / Category | Framework | Tests | Passed | Failed | Coverage | What This Proves |
 |---|---|---|---|---|---|---|
@@ -103,16 +103,12 @@ Every figure below was produced by running the suite in this checkout with CPyth
 | Quota metering (`tests/test_e2e_usage_limit_journey.py`) | pytest + `TestClient` | 2 | 2 | 0 | Same gated run | Consumption accumulates across requests to a fixed ceiling of 5, the next unit is refused with 429, and non-positive units are rejected before any accumulation. |
 | Operational probes and credential guard (`tests/test_e2e_service_ops.py`) | pytest + `TestClient` | 3 | 3 | 0 | Same gated run | Readiness and metrics answer their exact payloads without credentials, and all three refusal branches return their distinct details while a valid token is still admitted. |
 | Pre-existing suite (`tests/test_api.py`, unmodified) | pytest + `TestClient` | 3 | 3 | 0 | Same gated run | The original happy paths and the anonymous rejection still pass under the shared fixture and the new gate. |
-| End-to-end task journey (`tests/e2e/test_project_task_journey.py`) | pytest + httpx against a uvicorn child over a real socket | 1 | 1 | 0 | Same gated run | The four-route journey — `POST /projects` → `POST /tasks` → `PATCH /tasks/{id}` twice → `GET /projects` — holds over TCP, with the project and task ids carried from the responses that produced them. |
-| End-to-end role-grant journey (`tests/e2e/test_team_role_journey.py`) | pytest + httpx against a uvicorn child over a real socket | 1 | 0 | 0 (1 imperative expected failure) | Same gated run | Steps 1-4 assert both callers' projects, the member's pre-grant listing and the grant's exact response body; step 5 signals the recorded role-grant defect through `pytest.xfail` behind a `pytest.fail` fix guard. |
 | Coverage gate and test configuration (`pytest.ini`, `requirements.txt`) | pytest-cov 7.1.0 / coverage 7.17.3 | 4 gate scenarios | 4 | 0 | 100.00% total, 90% floor reached | The gate measures the `app` package on every run, fails a 60.49% subset with exit 1, and its printed verdict agrees with its exit status at each threshold tried. |
 | Assertion strength under deliberate mutation (throwaway copy) | pytest, one mutation per run | 8 | 8 killed | 0 survived | n/a | Removing either visibility branch, either accepted status, or disabling the unknown-project guard each turns the suite red, as does altering the quota ceiling, the refusal detail or the grant response. |
 
-**Totals:** 21 nodes — `19 passed, 2 xfailed` — in about 0.6 s, exit 0, with `Required test coverage of 90% reached. Total coverage: 100.00%`. The two expected failures are the two role-grant journeys — the in-process one described next, and the end-to-end one whose step 5 signals the same defect (its row above, and the inventory paragraph below).
+**Totals:** 19 nodes — `18 passed, 1 xfailed` — in 0.30 s, exit 0, with `Required test coverage of 90% reached. Total coverage: 100.00%`. The single expected failure is the role-grant journey described below.
 
 **The expected failure is load-bearing.** `test_role_grant_governs_later_requests` asserts the outcome the application does not produce: a granted owner role governing the member's later requests. It is marked `xfail(strict=True)` with a reason citing `app/main.py:29, 58, 89-90` against `:93`, and `-rxX` prints that reason in full. Running it with the marker disabled fails at the granted-rights comparison (`tests/test_e2e_team_role_journey.py:39`, `assert {2} == {1, 2}`), which is the evidence that the assertion is genuinely unsatisfied rather than weak; a future fix produces an unexpected pass and turns the run red.
-
-**The inventory the configuration collects.** `pytest.ini`'s `testpaths = tests` and `python_files = test_*.py` collect seven modules and 21 node ids today: `tests/test_api.py` (3), `tests/test_e2e_project_task_journey.py` (6), `tests/test_e2e_team_role_journey.py` (5), `tests/test_e2e_usage_limit_journey.py` (2) and `tests/test_e2e_service_ops.py` (3) — 19 in-process nodes that reach the application through `fastapi.testclient.TestClient`, the four `tests/test_e2e_*.py` modules being pre-existing committed modules authored by the earlier suite delivery rather than by the end-to-end addition recorded here — plus the two journeys under `tests/e2e/` (1 each), which reach a uvicorn child over a real loopback socket and are selected by the registered `e2e` marker. The four in-process modules are retained as collected, not removed or re-marked: they import cleanly and pass, and the same recorded role-grant defect is reported at both levels through each level's own mechanism — a strict declarative `xfail` in `tests/test_e2e_team_role_journey.py:10` and an imperative `pytest.xfail` at `tests/e2e/test_team_role_journey.py:41`, behind the `pytest.fail` fix guard at `:39`. Re-derived at this tree on CPython 3.13.18 with the six pins installed: `python -m pytest --collect-only -q` reports `21 tests collected`; `python -m pytest -q -m e2e --no-cov` reports `1 passed, 19 deselected, 1 xfailed`; `python -m pytest -q -m "not e2e" --no-cov` reports `18 passed, 2 deselected, 1 xfailed`; and the gated `python -m pytest -q` reports `19 passed, 2 xfailed, 1 warning in 0.61s` with `app/main.py 81/81 statements, 100.00%` and `Required test coverage of 90% reached`.
 
 **Not Covered**
 
@@ -168,14 +164,14 @@ This project was governed by the Agent Action Plan alone; no user-specified rule
 | What the AAP Required | What Was Delivered Instead | Why It Diverged | Impact | Remediation |
 |---|---|---|---|---|
 | `pytest.ini` as four lines with a single `addopts` line of three flags (§0.5.4) | Five lines: `pythonpath = .` added, and `--cov-precision=2` appended to the three mandated flags, which keep their spelling and order | The console-script form of the documented `pytest -q` needs the repository root on the import path, because `app` is not an installed package; and at the default comparison precision the gate's printed verdict and its exit status disagree across `[89.5, 90)`. The alternative remedies — a `README.md` edit and a `.coveragerc` — are excluded by §0.8.2 and §0.5.4 | None negative: discovery, measurement and gate unchanged; percentages print at two decimals | Record sign-off (0.5 h); no code change needed |
-| Thirteen tests in the four modules, projected as `15 passed, 1 xfailed` (§0.5.1, §0.5.2, §0.7.2) | Nineteen nodes: `18 passed, 1 xfailed` — four tests beyond the enumerated set (`test_accepted_statuses_transition_through_the_allow_list`, `test_owner_lists_every_project_and_member_lists_only_its_own`, `test_owner_grants_member_the_owner_role`, and the split second-refusal assertion) — 19 nodes at that delivery, 21 once the two end-to-end journeys landed (Section 3) | §0.3.2 requires `update_task`'s accepted statuses, `list_projects`' two branches and `change_role`'s happy path covered, while §0.4.4/§0.8.2 forbid removing the expected-failure marker and editing `app/`. A binding outside the marker is the only form that can signal a regression in those behaviours, and §0.7.2 makes the measured run the acceptance bar | None negative: every planned test still exists; the suite is strictly stronger | Record sign-off (0.5 h); no code change needed |
+| Thirteen tests in the four modules, projected as `15 passed, 1 xfailed` (§0.5.1, §0.5.2, §0.7.2) | Nineteen nodes: `18 passed, 1 xfailed` — four tests beyond the enumerated set (`test_accepted_statuses_transition_through_the_allow_list`, `test_owner_lists_every_project_and_member_lists_only_its_own`, `test_owner_grants_member_the_owner_role`, and the split second-refusal assertion) | §0.3.2 requires `update_task`'s accepted statuses, `list_projects`' two branches and `change_role`'s happy path covered, while §0.4.4/§0.8.2 forbid removing the expected-failure marker and editing `app/`. A binding outside the marker is the only form that can signal a regression in those behaviours, and §0.7.2 makes the measured run the acceptance bar | None negative: every planned test still exists; the suite is strictly stronger | Record sign-off (0.5 h); no code change needed |
 | The marker quoted as one physical line (§0.4.4) | The same marker over eight physical lines, its `reason` an implicit concatenation | The single-line form is 215 columns; the reason string, `strict=True` and the citation are byte-identical | Line numbering inside the module shifts; no behavioural effect | None |
 | The fixture explained as clearing in place "because handlers reference them by module global" (§0.4.5) | The comment names `tests/test_api.py`'s direct import as the constraint, and states why `TEAM` is reseeded while `USERS` is not | The handlers resolve those names by global lookup at call time and would follow a rebind; only the module that imported the dictionaries by name is detached by one | Documentation accuracy only | None |
 | No comment content mandated for the new modules | In-test comments record the absent task-read route, the monotonic clock, the refusal body's observability and the unobservable `TEAM` write | Each statement is a non-obvious constraint a maintainer would otherwise re-derive or break | None negative | None |
 
 **The two harness settings.** The plan fixed `pytest.ini`'s content literally, but the same section required two outcomes the literal file cannot deliver. The console-script form of `pytest -q` needs the repository root on the import path: the script puts only the virtual environment's `bin` directory on `sys.path`, while the suite imports the top-level `app` package, which is not installed as a distribution. `pythonpath = .` is the built-in key (pytest 8.3.5) that supplies that entry without editing `README.md`, which this work was scoped to leave alone. Separately, at the default comparison precision the gate's printed verdict disagrees with its exit status across the whole band `[89.5, 90)` — a subset measured at 56.79% prints `FAIL … not reached` yet exits 0 at a threshold of 57. `--cov-precision=2` pins the comparison the flag set already intended. Both lines are visible in `pytest.ini:4-5`, and the decision a human owes is a recorded sign-off rather than a change.
 
-**The four tests beyond the plan's enumeration.** The plan's file-by-file section enumerated thirteen tests, and its per-handler section required categories that thirteen could not reach: the accepted task statuses, both branches of the project-visibility filter, and `change_role`'s success response. Each of those behaviours needs a passing binding, because an assertion inside an expected-failure body cannot signal a regression — pytest reports the item as an expected failure whatever its body observes. Each added test was verified by mutating the handler it binds: two visibility mutants, two allow-list mutants and a grant-response mutant each turn the suite red, and the restored control is green at `18 passed, 1 xfailed`; the suite collects 21 nodes today (Section 3). Nothing the plan enumerated was dropped; the count differs, and that difference needs a recorded acceptance rather than a fix.
+**The four tests beyond the plan's enumeration.** The plan's file-by-file section enumerated thirteen tests, and its per-handler section required categories that thirteen could not reach: the accepted task statuses, both branches of the project-visibility filter, and `change_role`'s success response. Each of those behaviours needs a passing binding, because an assertion inside an expected-failure body cannot signal a regression — pytest reports the item as an expected failure whatever its body observes. Each added test was verified by mutating the handler it binds: two visibility mutants, two allow-list mutants and a grant-response mutant each turn the suite red, and the restored control is green at `18 passed, 1 xfailed`. Nothing the plan enumerated was dropped; the count differs, and that difference needs a recorded acceptance rather than a fix.
 
 # 6. Risk Assessment
 
@@ -223,7 +219,7 @@ pie title Remaining Hours by Priority
 | Progress signal | Value |
 |---|---|
 | Requirements complete | 21 of 21 |
-| Test nodes | 21 (`19 passed, 2 xfailed`) |
+| Test nodes | 19 (`18 passed, 1 xfailed`) |
 | Statement coverage of `app/main.py` | 100.00% (floor 90%) |
 | Deliberate mutations caught | 8 of 8 |
 | Recorded application defects open | 7 |
@@ -231,7 +227,7 @@ pie title Remaining Hours by Priority
 
 # 8. Summary & Recommendations
 
-**What was delivered.** The Proactive Insights Demo API now has an end-to-end suite that drives every one of its nine routes through its public HTTP surface: twenty-one test nodes across seven modules, a single autouse fixture that reseeds the application's in-memory stores before each test, and a coverage gate that measures the `app` package on every run and fails below 90%. The suite runs green in about 0.6 s from a clean virtual environment — `19 passed, 2 xfailed` — with statement coverage of `app/main.py` at 100.00% (81 statements, 0 missed), up from the 60% baseline. Nothing under `app/` changed: the application is byte-identical to the revision this work began on, and that constraint is what made the suite a specification of the API rather than a set of tests written to flatter it.
+**What was delivered.** The Proactive Insights Demo API now has an end-to-end suite that drives every one of its nine routes through its public HTTP surface: nineteen test nodes across five modules, a single autouse fixture that reseeds the application's in-memory stores before each test, and a coverage gate that measures the `app` package on every run and fails below 90%. The suite runs green in 0.30 s from a clean virtual environment — `18 passed, 1 xfailed` — with statement coverage of `app/main.py` at 100.00% (81 statements, 0 missed), up from the 60% baseline. Nothing under `app/` changed: the application is byte-identical to the revision this work began on, and that constraint is what made the suite a specification of the API rather than a set of tests written to flatter it.
 
 **What was proved.** Every asserted response binds more than a status code: the exact `{used, limit}` and `{user_id, role}` bodies, the project and task identifiers threaded from one request into the next, and the `detail` string on all nine refusal sites — in both the handler-raised string shape and pydantic's list shape. Eight deliberate mutations of the handlers the suite binds — either visibility branch, either accepted status, the unknown-project guard, the quota ceiling, the refusal detail and the grant response — each turned the suite red by a single named assertion, so the coverage figure reflects strength and not only line execution. The isolation fixture carries the same weight: the suite passes per module, in full, and in reversed order, so no test depends on another having run first. One requirement is deliberately pinned rather than satisfied: the role-grant journey asserts the governance outcome the application does not implement, is marked strict, and turns red the day it is fixed.
 
@@ -246,7 +242,7 @@ Every command below was run from the repository root and is copy-pasteable. The 
 ## 9.1 System Prerequisites
 
 - CPython 3.12 (verified on 3.12.3; the annotations at `app/main.py:25` require 3.10 or newer).
-- `git` for the checkout. Nothing else: nineteen of the 21 nodes drive the ASGI application in process through `fastapi.testclient.TestClient`, and the two `e2e`-marked journeys start uvicorn from the same environment on a kernel-assigned loopback port, so no fixed port, configuration or container is needed.
+- `git` for the checkout. Nothing else: the suite drives the ASGI application in process through `fastapi.testclient.TestClient` and opens no socket.
 - One free local TCP port if you want to serve the API by hand.
 
 ## 9.2 Environment Setup and Dependencies
@@ -284,10 +280,10 @@ app/main.py          81      0  100.00%
 -------------------------------------------------
 TOTAL                81      0  100.00%
 Required test coverage of 90% reached. Total coverage: 100.00%
-19 passed, 2 xfailed, 1 warning in 0.61s
+18 passed, 1 xfailed, 1 warning in 0.30s
 ```
 
-The command measures `app` coverage and enforces the 90% floor from one line, `addopts` in `pytest.ini`; a run below the floor exits non-zero. The two `xfailed` nodes are the deliberate role-grant expected failures described in Section 3.
+The command measures `app` coverage and enforces the 90% floor from one line, `addopts` in `pytest.ini`; a run below the floor exits non-zero. The `xfailed` node is the deliberate expected failure described in Section 3.
 
 ## 9.5 Iterating on a Subset
 
@@ -379,8 +375,6 @@ Supporting references for building, running and extending the suite. Every comma
 | Verify dependencies | `.venv/bin/python -m pip check` |
 | Compile check | `.venv/bin/python -m compileall -q app tests` |
 | Gated suite (coverage + 90% floor) | `.venv/bin/python -m pytest -q` |
-| The end-to-end level only (gate suppressed) | `.venv/bin/python -m pytest -q -o addopts="" -m e2e -rx` |
-| Everything except the end-to-end level (gate suppressed) | `.venv/bin/python -m pytest -q -o addopts="" -m "not e2e"` |
 | Same, through the console script | `PATH="$PWD/.venv/bin:$PATH" pytest -q` |
 | One module, no gate | `.venv/bin/python -m pytest -q -o addopts="" tests/test_e2e_service_ops.py` |
 | One test | `.venv/bin/python -m pytest -q -o addopts="" tests/test_e2e_usage_limit_journey.py::test_non_positive_units_are_rejected` |
@@ -396,9 +390,9 @@ Supporting references for building, running and extending the suite. Every comma
 | Service | Port | Notes |
 |---|---|---|
 | Proactive Insights Demo API (uvicorn) | 18000 in the examples above | The only listener the project needs. Choose any free port; nothing in the code or configuration binds a port. |
-| Test suite | none | The 19 in-process nodes open no socket; the two `e2e`-marked journeys let the kernel assign a free loopback port to the uvicorn child and release it in teardown. |
+| Test suite | none | Runs in process through `fastapi.testclient.TestClient`; no socket is opened. |
 
-Parallel checkouts on one host should each take their own block of ten ports; the suite binds no fixed port — the end-to-end journeys take a kernel-assigned ephemeral one — so only a hand-served instance occupies a port from the block.
+Parallel checkouts on one host should each take their own block of ten ports; the suite itself needs none, so only a hand-served instance occupies a port.
 
 ## C. Key File Locations
 
@@ -407,15 +401,12 @@ Parallel checkouts on one host should each take their own block of ten ports; th
 | `app/main.py` | The whole application: stores, models, the credential guard and nine route handlers (110 lines, 81 statements). Read-only for this work. |
 | `app/__init__.py` | Package marker. |
 | `tests/conftest.py` | The single autouse fixture that reseeds every module-level store and rebinds both id counters. |
-| `tests/e2e/conftest.py` | The live-server harness: a session-scoped `live_server` fixture (kernel-assigned port, uvicorn child, `/health` readiness with a 30 s deadline, teardown in `finally`) and the session-scoped `api` httpx client. |
-| `tests/e2e/test_project_task_journey.py` | The `e2e`-marked task journey over a real socket; no expected failure. |
-| `tests/e2e/test_team_role_journey.py` | The `e2e`-marked two-caller role-grant journey; its expected failure is signalled imperatively at step 5. |
 | `tests/test_e2e_project_task_journey.py` | Project and task lifecycle, the accepted-status walk and the task error paths. |
 | `tests/test_e2e_team_role_journey.py` | Role grant and demotion (strict expected failure), the grant response, both visibility branches and the role refusals. |
 | `tests/test_e2e_usage_limit_journey.py` | Quota accumulation, the ceiling refusal and non-positive units. |
 | `tests/test_e2e_service_ops.py` | Readiness, metrics and the credential-refusal branches. |
 | `tests/test_api.py` | The original three tests, deliberately unmodified. |
-| `pytest.ini` | Discovery keys (`testpaths`, `python_files`), the import path (`pythonpath = .`), the coverage flags (`addopts`, including the 90% floor), plus the registered `e2e` marker. |
+| `pytest.ini` | Discovery keys (`testpaths`, `python_files`), the import path (`pythonpath = .`) and the coverage flags (`addopts`, including the 90% floor). |
 | `requirements.txt` | Six exact pins: the four application pins plus `pytest-cov` and `coverage`. |
 | `README.md` | How the repository describes itself; its test section is now out of date (Section 2.2). |
 
@@ -473,8 +464,7 @@ When you add a test, follow the existing conventions: a module-level `client = T
 | In-process `TestClient` | `fastapi.testclient.TestClient`, which drives the ASGI application without opening a socket. |
 | Statement coverage | The share of executable statements coverage.py records as executed; the project's floor is 90% of `app/main.py`'s 81 statements. |
 | Coverage gate | `--cov-fail-under=90` in `pytest.ini`'s `addopts`, which makes a run exit non-zero below the floor. |
-| Expected failure (`xfail`) | A test that asserts an outcome the code does not produce: it reports as `xfailed` and leaves the run green, but a future fix turns it into a failing unexpected pass. This suite signals it two ways — a strict declarative marker in tests/test_e2e_team_role_journey.py and an imperative `pytest.xfail` behind a `pytest.fail` fix guard in the end-to-end journey. |
-| `e2e` marker | The marker registered in `pytest.ini` and applied module-wide by `pytestmark` in `tests/e2e/`; `-m e2e` selects the two live-socket journeys and deselects the other 19 nodes. |
+| Expected failure (strict `xfail`) | A test that asserts an outcome the code does not produce; it reports as `xfailed` and leaves the run green, but a future fix turns it into a failing unexpected pass. |
 | Visibility filter | The list comprehension at `app/main.py:58` that shows an owner every project and a member only its own. |
 | Allow-list | The three accepted statuses at `app/main.py:80`: `open`, `in_progress`, `done`. |
 | Mutation check | Editing a handler in a throwaway copy to confirm a test fails — the evidence that an assertion carries signal rather than merely executing a line. |
