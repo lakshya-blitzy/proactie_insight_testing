@@ -49,8 +49,8 @@ class RendezvousUsage(dict):
         try:
             self._barrier.wait()
         except threading.BrokenBarrierError:
-            # Under the fix only one caller can be inside the guarded region, so
-            # the barrier never fills and the timeout is the expected outcome.
+            # With the lock held, only one caller is inside the guarded region,
+            # so the barrier never fills and the wait times out.
             pass
         return value
 
@@ -65,8 +65,8 @@ class RendezvousUsage(dict):
             try:
                 self._store_barrier.wait()
             except threading.BrokenBarrierError:
-                # Under the fix the guard admits one caller at a time, so this
-                # barrier never fills and the timeout is the expected outcome.
+                # With the lock held, one caller at a time reaches this store,
+                # so the barrier never fills and the wait times out.
                 pass
         super().__setitem__(key, value)
 
