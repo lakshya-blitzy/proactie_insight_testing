@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
+from threading import Lock
 from time import monotonic
 
 app = FastAPI(title="Proactive Insights Demo API", version="1.0.0")
@@ -9,6 +10,7 @@ PROJECTS = {}
 TASKS = {}
 TEAM = {1: "owner", 2: "member"}
 USAGE = {"used": 0, "limit": 5}
+USAGE_LOCK = Lock()
 NEXT_PROJECT = 1
 NEXT_TASK = 1
 
@@ -99,9 +101,10 @@ def consume_usage(units: int = 1, authorization: str | None = Header(default=Non
     current_user(authorization)
     if units < 1:
         raise HTTPException(422, "Units must be positive")
-    if USAGE["used"] + units > USAGE["limit"]:
-        raise HTTPException(429, "Usage limit reached")
-    USAGE["used"] += units
+    with USAGE_LOCK:
+        if USAGE["used"] + units > USAGE["limit"]:
+            raise HTTPException(429, "Usage limit reached")
+        USAGE["used"] += units
     return USAGE
 
 
