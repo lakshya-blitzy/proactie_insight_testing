@@ -9,6 +9,7 @@ MEMBER = {"Authorization": "Bearer member-token"}
 def test_owner_grants_member_owner_role_and_member_then_sees_team_projects(api):
     owner_project = api.post("/projects", json={"name": "Owner Scope"}, headers=OWNER)
     assert owner_project.status_code == 200
+    assert owner_project.json()["owner_id"] == 1
     owner_project_id = owner_project.json()["id"]
 
     member_project = api.post("/projects", json={"name": "Member Scope"}, headers=MEMBER)

@@ -3,6 +3,7 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 OWNER = {"Authorization": "Bearer owner-token"}
+MEMBER = {"Authorization": "Bearer member-token"}
 
 
 def test_api_client_files_task_in_new_project_and_finds_project_after_task_is_done(api):
