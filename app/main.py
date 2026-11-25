@@ -32,6 +32,7 @@ def current_user(authorization: str | None):
     return user
 
 
+# Liveness probe: returns {"status": "ok"} when the service is running.
 @app.get("/health")
 def health():
     return {"status": "ok"}
