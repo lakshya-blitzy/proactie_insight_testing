@@ -2,7 +2,7 @@ import flask
 
 METHODS = ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"]
 
-app = flask.Flask(__name__)
+app = flask.Flask(__name__, static_folder=None)
 flask.cli.show_server_banner = lambda *args, **kwargs: None
 
 
