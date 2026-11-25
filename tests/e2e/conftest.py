@@ -11,7 +11,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# The readiness budget, in seconds; the deadline and the failure message both read it.
+# The readiness budget, in seconds.
 READINESS_TIMEOUT = 30
 
 # How many free-port -> spawn -> readiness attempts the harness makes before it reports the
@@ -22,7 +22,7 @@ SPAWN_ATTEMPTS = 3
 # oldest, so a runaway child cannot grow the buffer without limit.
 OUTPUT_LINES = 200
 
-# app/main.py:35-37 answers exactly this; a 200 carrying anything else is a foreign
+# GET /health in app/main.py answers exactly this; a 200 carrying anything else is a foreign
 # responder holding the port, not the service under test.
 HEALTH_BODY = {"status": "ok"}
 
@@ -48,13 +48,16 @@ def live_server():
         )
         # The pipe is drained on its own thread for the session's life: a child that writes
         # more than the OS pipe buffer would otherwise block inside write() and stop serving.
-        # The deque is bounded, so the drain costs the harness a fixed amount of memory.
         output = collections.deque(maxlen=OUTPUT_LINES)
+        # The drain thread appends while a failure message reads the buffer, so a reader takes
+        # a snapshot under this lock instead of iterating a deque being mutated.
+        output_lock = threading.Lock()
 
-        def _drain(stream=proc.stdout, lines=output):
+        def _drain(stream=proc.stdout, lines=output, lock=output_lock):
             try:
                 for line in stream:
-                    lines.append(line)
+                    with lock:
+                        lines.append(line)
             except ValueError:
                 pass  # teardown closed the pipe while this thread was still reading it
 
@@ -66,15 +69,16 @@ def live_server():
             # The server is a separate process, so an answered request is the only
             # authoritative readiness signal.
             deadline = time.monotonic() + READINESS_TIMEOUT
-            # trust_env=False for the same reason the api client sets it: a proxy variable
-            # must not capture this loopback request and turn readiness into a false timeout.
+            # trust_env=False so a proxy variable cannot capture this loopback request and turn
+            # readiness into a false timeout.
             with httpx.Client(base_url=base_url, timeout=1.0, trust_env=False) as probe:
                 while True:
                     if proc.poll() is not None:
                         # The child is gone, so its pipe reaches EOF: joining the reader
                         # bounds this wait, where reading the pipe here would not.
                         reader.join(timeout=5)
-                        captured = "".join(output).strip()
+                        with output_lock:
+                            captured = "".join(output).strip()
                         address_taken = "address already in use" in captured.lower()
                         if address_taken and attempt < SPAWN_ATTEMPTS:
                             # Another process claimed the port after _free_port() released
@@ -93,9 +97,11 @@ def live_server():
                     if time.monotonic() > deadline:
                         # A live child's pipe never reaches EOF, so report what the drain
                         # thread has already taken off it rather than blocking in a read.
+                        with output_lock:
+                            captured = "".join(output).strip()
                         raise RuntimeError(
                             f"server did not answer /health at {base_url} within "
-                            f"{READINESS_TIMEOUT}s: {''.join(output).strip()}"
+                            f"{READINESS_TIMEOUT}s: {captured}"
                         )
                     time.sleep(0.1)
             if retry:
@@ -119,6 +125,5 @@ def live_server():
 
 @pytest.fixture(scope="session")
 def api(live_server):
-    # trust_env=False so a proxy variable cannot capture loopback traffic.
     with httpx.Client(base_url=live_server, timeout=5.0, trust_env=False) as client:
         yield client
