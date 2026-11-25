@@ -102,9 +102,8 @@ def test_concurrent_consume_never_exceeds_limit(monkeypatch):
 
 
 def test_omitted_units_defaults_to_one():
-    # Pins the handler's `units: int = 1` default (app/main.py:100), a preserved
-    # contract element no other test exercises: every other /billing/consume call
-    # in tests/ sends an explicit units.
+    # Pins consume_usage's `units: int = 1` default: no other test calls
+    # /billing/consume without an explicit units value.
     client = TestClient(main.app)
     # The autouse fixture in tests/conftest.py resets main.USAGE["used"] to 0, so
     # the omitted parameter spends exactly one of the five units.
