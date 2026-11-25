@@ -58,10 +58,18 @@ def test_billing_consume_validates_units_and_enforces_limit():
     assert refused.json()["detail"] == "Units must be positive"
     assert USAGE["used"] == 0
 
-    assert client.post("/billing/consume?units=1", headers=OWNER).json()["used"] == 1
-    assert client.post("/billing/consume?units=2", headers=OWNER).json()["used"] == 3
-    assert client.post("/billing/consume", headers=OWNER).json()["used"] == 4
-    assert client.post("/billing/consume", headers=OWNER).json()["used"] == 5
+    unit_one = client.post("/billing/consume?units=1", headers=OWNER)
+    assert unit_one.status_code == 200
+    assert unit_one.json()["used"] == 1
+    unit_two = client.post("/billing/consume?units=2", headers=OWNER)
+    assert unit_two.status_code == 200
+    assert unit_two.json()["used"] == 3
+    default_units = client.post("/billing/consume", headers=OWNER)
+    assert default_units.status_code == 200
+    assert default_units.json()["used"] == 4
+    at_limit = client.post("/billing/consume", headers=OWNER)
+    assert at_limit.status_code == 200
+    assert at_limit.json()["used"] == 5
 
     blocked = client.post("/billing/consume?units=1", headers=OWNER)
     assert blocked.status_code == 429
@@ -75,7 +83,9 @@ def test_create_task_rejects_unknown_project_and_stores_open():
     assert orphan.json()["detail"] == "Project not found"
     assert TASKS == {}
 
-    project = client.post("/projects", json={"name": "Task Home"}, headers=OWNER).json()
+    project_created = client.post("/projects", json={"name": "Task Home"}, headers=OWNER)
+    assert project_created.status_code == 200
+    project = project_created.json()
     created = client.post("/tasks", json={"title": "Write tests", "project_id": project["id"]}, headers=MEMBER)
     assert created.status_code == 200
     task = created.json()
@@ -86,9 +96,18 @@ def test_create_task_rejects_unknown_project_and_stores_open():
 
 
 def test_patch_task_status_persists_and_rejects_invalid():
-    project = client.post("/projects", json={"name": "Patch Home"}, headers=OWNER).json()
-    task = client.post("/tasks", json={"title": "Track status", "project_id": project["id"]}, headers=OWNER).json()
+    project_created = client.post("/projects", json={"name": "Patch Home"}, headers=OWNER)
+    assert project_created.status_code == 200
+    project = project_created.json()
+    task_created = client.post("/tasks", json={"title": "Track status", "project_id": project["id"]}, headers=OWNER)
+    assert task_created.status_code == 200
+    task = task_created.json()
     assert task["status"] == "open"
+
+    progress = client.patch(f"/tasks/{task['id']}?status=in_progress", headers=OWNER)
+    assert progress.status_code == 200
+    assert progress.json()["status"] == "in_progress"
+    assert TASKS[task["id"]]["status"] == "in_progress"
 
     updated = client.patch(f"/tasks/{task['id']}?status=done", headers=OWNER)
     assert updated.status_code == 200
