@@ -19,7 +19,9 @@ def setup_function():
 
 
 def test_health_endpoint():
-    assert client.get("/health").json() == {"status": "ok"}
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 def test_owner_can_create_and_list_project():
@@ -45,7 +47,9 @@ def test_owner_can_create_and_list_project():
 
 
 def test_missing_token_is_rejected():
-    assert client.get("/projects").status_code == 401
+    response = client.get("/projects")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Missing bearer token"
 
 
 def test_billing_consume_validates_units_and_enforces_limit():
