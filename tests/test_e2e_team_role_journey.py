@@ -11,9 +11,8 @@ MEMBER = {"Authorization": "Bearer member-token"}
     strict=True,
     reason=(
         "Role grants are written to TEAM but authorization reads USERS, so a promoted "
-        "member keeps member rights (USERS.get(token) in current_user, the "
-        "list_projects visibility filter and change_role's owner check vs the "
-        "TEAM[user_id] = role write)"
+        "member keeps member rights (app/main.py:29, app/main.py:58, app/main.py:89-90 "
+        "vs app/main.py:93)"
     ),
 )
 def test_role_grant_governs_later_requests():
@@ -50,8 +49,8 @@ def test_role_grant_governs_later_requests():
 
 # Binds change_role's success response outside the marker above, whose grant assertion
 # carries no signal: pytest reports an expected failure whatever the marked body observes.
-# The TEAM[user_id] = role write is unobservable through the API (the only TEAM read is
-# change_role's membership test), leaving the response as the only bindable surface.
+# The TEAM[user_id] = role write at app/main.py:93 is unobservable through the API (TEAM
+# is read only at app/main.py:91), leaving the response as the only bindable surface.
 def test_owner_grants_member_the_owner_role():
     response = client.post("/teams/2/role", params={"role": "owner"}, headers=OWNER)
     assert response.status_code == 200
@@ -70,7 +69,7 @@ def test_owner_lists_every_project_and_member_lists_only_its_own():
     member_project_id = member_project.json()["id"]
 
     # The two listings below bind both branches of the project-visibility filter in
-    # list_projects outside the expected-failure marker above: a filter that shows a
+    # app/main.py:58 outside the expected-failure marker above: a filter that shows a
     # member every project, or one that hides a teammate's project from an owner,
     # fails this test.
     member_listing = client.get("/projects", headers=MEMBER)
