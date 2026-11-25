@@ -26,5 +26,5 @@ def test_list_projects_scopes_by_role():
     # listing would look correct even if the role check in list_projects were removed.
     create_project(ProjectIn(name="Alpha"), OWNER)
     create_project(ProjectIn(name="Beta"), MEMBER)
-    assert list_projects(OWNER) == [main.PROJECTS[1], main.PROJECTS[2]]
-    assert list_projects(MEMBER) == [main.PROJECTS[2]]
+    assert list_projects(OWNER) == [{"id": 1, "name": "Alpha", "owner_id": 1}, {"id": 2, "name": "Beta", "owner_id": 2}]
+    assert list_projects(MEMBER) == [{"id": 2, "name": "Beta", "owner_id": 2}]
