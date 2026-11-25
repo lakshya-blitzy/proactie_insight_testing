@@ -14,12 +14,13 @@ OWNER = {"Authorization": "Bearer owner-token"}
 
 
 class RendezvousUsage(dict):
-    """A USAGE stand-in that parks each caller's first read of "used".
+    """A USAGE stand-in that parks each caller's first read and store of "used".
 
     The quota check and the increment in consume_usage sit a few bytecodes
-    apart, so a natural interleaving almost never lands. A barrier every caller
-    must reach before deciding makes them all compare against the same
-    pre-increment value, which is exactly the window the race needs.
+    apart, so a natural interleaving almost never lands. One barrier every
+    caller must reach before deciding makes them all compare against the same
+    pre-increment value; another every caller must reach before storing pins
+    the other end of the window, which is exactly what the race needs.
     """
 
     def __init__(self, **kwargs):
@@ -27,12 +28,14 @@ class RendezvousUsage(dict):
         self._local = threading.local()
         self._generation = 0
         self._barrier = threading.Barrier(CALLERS, timeout=RENDEZVOUS_TIMEOUT)
+        self._store_barrier = threading.Barrier(CALLERS, timeout=RENDEZVOUS_TIMEOUT)
 
     def start_generation(self):
         # A barrier that has timed out stays broken, so every repetition needs a
         # fresh one plus a new generation for the per-thread parking to repeat.
         self._generation += 1
         self._barrier = threading.Barrier(CALLERS, timeout=RENDEZVOUS_TIMEOUT)
+        self._store_barrier = threading.Barrier(CALLERS, timeout=RENDEZVOUS_TIMEOUT)
 
     def __getitem__(self, key):
         # Park on the first read of "used" per caller per repetition; the re-read
@@ -51,6 +54,22 @@ class RendezvousUsage(dict):
             pass
         return value
 
+    def __setitem__(self, key, value):
+        # The store half of the window: parking it too makes a guard that holds
+        # only the comparison - still wrong, because the += arithmetic races -
+        # fail deterministically, instead of passing whenever the next caller's
+        # read lands after the previous caller's store.
+        stamp = getattr(self._local, "store_generation", None)
+        if key == "used" and stamp != self._generation:
+            self._local.store_generation = self._generation
+            try:
+                self._store_barrier.wait()
+            except threading.BrokenBarrierError:
+                # Under the fix the guard admits one caller at a time, so this
+                # barrier never fills and the timeout is the expected outcome.
+                pass
+        super().__setitem__(key, value)
+
     def stored_used(self):
         # Bypass the hook, or an assertion would park for another timeout.
         return dict.__getitem__(self, "used")
@@ -63,7 +82,8 @@ def test_concurrent_consume_never_exceeds_limit(monkeypatch):
     client = TestClient(main.app)
 
     for _ in range(REPETITIONS):
-        usage["used"] = START_USED
+        # Bypass the store hook, or the test thread would park for a timeout.
+        dict.__setitem__(usage, "used", START_USED)
         usage.start_generation()
         with ThreadPoolExecutor(max_workers=CALLERS) as pool:
             responses = list(pool.map(
@@ -79,3 +99,15 @@ def test_concurrent_consume_never_exceeds_limit(monkeypatch):
         assert len(rejected) == CALLERS - len(accepted)
         assert all(r.json() == {"detail": "Usage limit reached"} for r in rejected)
         assert usage.stored_used() == START_USED + UNITS * len(accepted)
+
+
+def test_omitted_units_defaults_to_one():
+    # Pins the handler's `units: int = 1` default (app/main.py:100), a preserved
+    # contract element no other test exercises: every other /billing/consume call
+    # in tests/ sends an explicit units.
+    client = TestClient(main.app)
+    # The autouse fixture in tests/conftest.py resets main.USAGE["used"] to 0, so
+    # the omitted parameter spends exactly one of the five units.
+    response = client.post("/billing/consume", headers=OWNER)
+    assert response.status_code == 200
+    assert response.json() == {"used": 1, "limit": 5}
