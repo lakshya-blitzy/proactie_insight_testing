@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from app import main
 
 client = TestClient(app)
 OWNER = {"Authorization": "Bearer owner-token"}
@@ -24,13 +25,8 @@ def test_role_grant_governs_later_requests():
     assert member_project.status_code == 200
     member_project_id = member_project.json()["id"]
 
-    before_grant = client.get("/projects", headers=MEMBER)
-    assert before_grant.status_code == 200
-    assert [p["id"] for p in before_grant.json()] == [member_project_id]
-
     grant = client.post("/teams/2/role", params={"role": "owner"}, headers=OWNER)
     assert grant.status_code == 200
-    assert grant.json() == {"user_id": 2, "role": "owner"}
 
     # This set comparison is the assertion the application does not satisfy: the grant
     # is stored in TEAM, while authorization keeps reading the seeded USERS role.
@@ -47,14 +43,20 @@ def test_role_grant_governs_later_requests():
     assert [p["id"] for p in after_revoke.json()] == [owner_project_id]
 
 
-# Binds change_role's success response outside the marker above, whose grant assertion
-# carries no signal: pytest reports an expected failure whatever the marked body observes.
-# The TEAM[user_id] = role write at app/main.py:93 is unobservable through the API (TEAM
-# is read only at app/main.py:91), leaving the response as the only bindable surface.
+# The grant response only echoes the handler's arguments, so the TEAM[user_id] = role
+# write at app/main.py:93 is bound by the store assertions below, not by the response.
+# The marker on the test above covers only the two consequences the application violates;
+# every other step of that test is bound by an unmarked test.
 def test_owner_grants_member_the_owner_role():
     response = client.post("/teams/2/role", params={"role": "owner"}, headers=OWNER)
     assert response.status_code == 200
     assert response.json() == {"user_id": 2, "role": "owner"}
+    assert main.TEAM[2] == "owner"    # after POST /teams/2/role?role=owner
+
+    second = client.post("/teams/2/role", params={"role": "member"}, headers=OWNER)
+    assert second.status_code == 200
+    assert second.json() == {"user_id": 2, "role": "member"}
+    assert main.TEAM[2] == "member"   # after POST /teams/2/role?role=member
 
 
 def test_owner_lists_every_project_and_member_lists_only_its_own():
