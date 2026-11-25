@@ -36,6 +36,7 @@ def test_owner_grants_member_owner_role_and_member_then_sees_team_projects(api):
     # Raised imperatively rather than by a declarative expected-failure marker: a marker
     # would report a break in any step above as an expected failure too, hiding it.
     if owner_project_id in seen:
-        pytest.fail("the role grant now governs visibility: delete this guard, keep the assertion")
+        pytest.fail("the role grant now governs visibility: replace this guard and the xfail "
+                    "below with assert owner_project_id in seen")
     pytest.xfail("Role grants are written to TEAM (app/main.py:93) while the visibility filter "
                  "(app/main.py:58) and the role gate (app/main.py:89) read USERS (app/main.py:29)")
