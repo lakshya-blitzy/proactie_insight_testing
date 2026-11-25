@@ -7,6 +7,17 @@ from app.main import consume_usage
 OWNER = "Bearer owner-token"
 
 
+def test_consume_usage_requires_authorization():
+    # units=1 is a valid quantity, so only the bearer-token guard can reject this call.
+    with pytest.raises(HTTPException) as missing:
+        consume_usage(1, None)
+    assert missing.value.status_code == 401
+    assert missing.value.detail == "Missing bearer token"
+
+    # The guard runs before the quota arithmetic, so the refusal consumed nothing.
+    assert main.USAGE["used"] == 0
+
+
 def test_consume_usage_rejects_non_positive_units():
     with pytest.raises(HTTPException) as zero:
         consume_usage(0, OWNER)

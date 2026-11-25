@@ -33,3 +33,10 @@ def test_task_title_bounds():
 def test_task_project_id_must_be_integer():
     with pytest.raises(ValidationError):
         TaskIn(title="ab", project_id="not-an-int")
+    # app/main.py:22 types project_id as int, so a fractional id must be rejected here at the
+    # request contract instead of reaching create_task and only failing there as a 404.
+    with pytest.raises(ValidationError):
+        TaskIn(title="ab", project_id=1.5)
+    parsed = TaskIn(title="ab", project_id=1)
+    assert parsed.project_id == 1
+    assert type(parsed.project_id) is int

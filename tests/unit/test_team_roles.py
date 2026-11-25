@@ -39,3 +39,11 @@ def test_owner_changes_role_and_team_reflects_it():
     assert result == {"user_id": 2, "role": "owner"}
     # The whole table, because the response alone cannot show that TEAM was written.
     assert main.TEAM == {1: "owner", 2: "owner"}
+
+    # "member" is an accepted role too (app/main.py:91), not only "owner".
+    demoted = change_role(2, "member", OWNER)
+
+    assert demoted == {"user_id": 2, "role": "member"}
+    # Demoting after promoting bounds the write at app/main.py:93 in the second direction:
+    # a handler that admitted "member" but skipped the write would leave TEAM[2] at "owner".
+    assert main.TEAM == {1: "owner", 2: "member"}
