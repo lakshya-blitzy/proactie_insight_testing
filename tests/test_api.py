@@ -43,6 +43,16 @@ def test_usage_contract_preserved_for_single_principal():
     first = client.post("/billing/consume", headers=member)
     assert first.status_code == 200
     assert first.json() == {"used": 1, "limit": 5}
-    assert client.post("/billing/consume?units=0", headers=member).json() == {"detail": "Units must be positive"}
+    assert list(first.json()) == ["used", "limit"]
+    below_floor = client.post("/billing/consume?units=0", headers=member)
+    assert below_floor.status_code == 422
+    assert below_floor.json() == {"detail": "Units must be positive"}
     assert client.post("/billing/consume?units=5", headers=member).status_code == 429
-    assert client.post("/billing/consume").status_code == 401
+    unauthenticated = client.post("/billing/consume")
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.json() == {"detail": "Missing bearer token"}
+    unknown_token = client.post("/billing/consume", headers={"Authorization": "Bearer not-a-real-token"})
+    assert unknown_token.status_code == 401
+    assert unknown_token.json() == {"detail": "Invalid token"}
+    malformed_units = client.post("/billing/consume?units=abc", headers=member)
+    assert malformed_units.status_code == 422
