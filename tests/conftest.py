@@ -15,5 +15,5 @@ def reset_app_state(monkeypatch):
     main.TASKS.clear()
     main.TEAM.clear()
     main.TEAM.update({1: "owner", 2: "member"})
-    main.USAGE["used"] = 0
+    main.USAGE["by_user"].clear()
     yield

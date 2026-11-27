@@ -8,7 +8,7 @@ USERS = {"owner-token": {"id": 1, "role": "owner"}, "member-token": {"id": 2, "r
 PROJECTS = {}
 TASKS = {}
 TEAM = {1: "owner", 2: "member"}
-USAGE = {"used": 0, "limit": 5}
+USAGE = {"limit": 5, "by_user": {}}
 NEXT_PROJECT = 1
 NEXT_TASK = 1
 
@@ -96,13 +96,14 @@ def change_role(user_id: int, role: str, authorization: str | None = Header(defa
 
 @app.post("/billing/consume")
 def consume_usage(units: int = 1, authorization: str | None = Header(default=None)):
-    current_user(authorization)
+    user = current_user(authorization)
     if units < 1:
         raise HTTPException(422, "Units must be positive")
-    if USAGE["used"] + units > USAGE["limit"]:
+    used = USAGE["by_user"].get(user["id"], 0)
+    if used + units > USAGE["limit"]:
         raise HTTPException(429, "Usage limit reached")
-    USAGE["used"] += units
-    return USAGE
+    USAGE["by_user"][user["id"]] = used + units
+    return {"used": used + units, "limit": USAGE["limit"]}
 
 
 @app.get("/metrics")
