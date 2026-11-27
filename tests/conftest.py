@@ -11,6 +11,8 @@ def reset_app_state(monkeypatch):
     # copy; the counters are rebound above because the create handlers reassign them via
     # a global statement. TEAM is reseeded because change_role writes it; USERS is left
     # untouched because no handler writes it.
+    # USAGE's per-principal figures are cleared in place the same way; its single shared
+    # limit is left untouched because the ceiling is never a per-test concern.
     main.PROJECTS.clear()
     main.TASKS.clear()
     main.TEAM.clear()
